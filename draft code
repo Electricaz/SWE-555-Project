@@ -1,0 +1,108 @@
+
+// Include the libraries
+#include <WiFi.h>
+#include <WebServer.h>
+
+// Define the pins
+const int LM35_PIN = 34; // Analog pin for LM35 sensor
+const int MQ2_PIN = 35; // Analog pin for MQ-2 sensor
+
+// Define the WiFi credentials
+const char* ssid = "Elyas";
+const char* password = "11111111";
+
+// Create a web server object
+WebServer server(80);
+
+// Define a function to convert the analog value to temperature
+float analogToTemperature(int value) {
+  // Convert the value to voltage (assuming 3.3V reference)
+  float voltage = value * 3.3 / 4095.0;
+  // Convert the voltage to temperature (assuming 10mV per degree Celsius)
+  float temperature = voltage * 100.0;
+  // Return the temperature value
+  return temperature;
+}
+
+// Define a function to convert the analog value to smoke level
+float analogToSmoke(int value) {
+  // Convert the value to voltage (assuming 3.3V reference)
+  float voltage = value * 3.3 / 4095.0;
+  // Convert the voltage to resistance using a voltage divider formula (assuming 10k ohm resistor)
+  float resistance = (5.0 - voltage) * 10000.0 / voltage;
+  // Convert the resistance to smoke level using a logarithmic formula (calibrated for MQ-2 sensor)
+  float smoke = pow(resistance / 9.83, -1.709);
+  // Return the smoke level value
+  return smoke;
+}
+
+// Define a function to handle the root request
+void handleRoot() {
+  // Read the analog values from the sensor pins
+  int tempValue = analogRead(LM35_PIN);
+  int smokeValue = analogRead(MQ2_PIN);
+  // Check if both values are valid
+  if (tempValue >= 0 && tempValue <= 4095 && smokeValue >= 0 && smokeValue <= 4095) {
+    // Convert both values to their corresponding units
+    float temperature = analogToTemperature(tempValue);
+    float smoke = analogToSmoke(smokeValue);
+    // Create a HTML page template to display both values
+    String pageTemplate = "<html><head><title>ESP32 Temperature and Smoke Web Server</title><style>body {font-family: Arial; text-align: center;} h1 {color: green;} p {font-size: 24px;}</style></head><body><h1>ESP32 Temperature and Smoke Web Server</h1><p>The current temperature is: %TEMP% &deg;C</p><p>The current smoke level is: %SMOKE% ppm</p></body></html>";
+    // Replace the placeholders with their respective values
+    String page = pageTemplate;
+    page.replace("%TEMP%", String(temperature));
+    page.replace("%SMOKE%", String(smoke));
+    // Send the page to the client
+    server.send(200, "text/html", page);
+  } else {
+    // Send an error message to the client
+    server.send(500, "text/plain", "Invalid sensor readings");
+  }
+}
+
+// Define a function to handle any other request
+void handleNotFound() {
+  // Send a 404 error message to the client
+  server.send(404, "text/plain", "Not found");
+}
+
+// The setup function runs once when the board starts up
+void setup() {
+  // Initialize serial communication at 115200 baud rate
+  Serial.begin(115200);
+  // Initialize WiFi mode as station (client)
+  WiFi.mode(WIFI_STA);
+  // Connect to the WiFi network using the credentials
+  WiFi.begin(ssid, password);
+  // Wait until connected or timeout after 10 seconds
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+  // Check if connected or not
+  if (WiFi.status() == WL_CONNECTED) {
+    // Print the IP address of the ESP32
+    Serial.println("");
+    Serial.println("WiFi connected.");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    // Set the root request handler
+    server.on("/", handleRoot);
+    // Set the not found request handler
+    server.onNotFound(handleNotFound);
+    // Start the web server
+    server.begin();
+    Serial.println("Web server started.");
+  } else {
+    // Print an error message and do nothing
+    Serial.println("");
+    Serial.println("WiFi connection failed.");
+  }
+}
+
+// The loop function runs repeatedly after setup finishes
+void loop() {
+  // Handle any incoming client requests
+  server.handleClient();
+}
