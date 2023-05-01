@@ -5,6 +5,8 @@
 #include <ESPAsyncWebServer.h>
 #include <SD.h>
 #include <SPI.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // Replace with your network credentials
 const char* ssid = "your_SSID";
@@ -13,18 +15,19 @@ const char* password = "your_PASSWORD";
 // MQ-11 digital pin
 const int mq11Pin = 32;
 
-// Define temperature threshold
-const float TEMPERATURE_THRESHOLD = 65.0;
-
-const unsigned long FIRE_INTERVAL = 5 * 1000; //5 seconds
-const unsigned long MAINTENANCE_INTERVAL = 20 * 60 * 1000; //20 minutes
-const unsigned long NORMAL_INTERVAL = 60 * 60 * 1000; //1 hour
-
 // LED and buzzer pins
 const int ledPin = 33;
 const int buzzerPin = 34;
 const int firePanelPin = 35;
 const int chipSelect = 14;
+
+// Temperature threshold
+const float TEMPERATURE_THRESHOLD = 65.0;
+
+// Notification intervals
+const unsigned long FIRE_INTERVAL = 5 * 1000;
+const unsigned long MAINTENANCE_INTERVAL = 20 * 60 * 1000;
+const unsigned long NORMAL_INTERVAL = 60 * 60 * 1000;
 
 // BMP-280
 Adafruit_BMP280 bmp;
@@ -41,56 +44,66 @@ enum Status {
 };
 
 Status currentStatus = Normal;
-unsigned long lastNotificationTime = 0;
 
-// Function to determine status
-void updateStatus() {
-  int mq11Value = digitalRead(mq11Pin);
-  float temperature = bmp.readTemperature();
-  float pressure = bmp.readPressure();
-  Status previousStatus = currentStatus;
+// Update status task
+void updateStatusTask(void* parameter) {
+  while (1) {
+    int mq11Value = digitalRead(mq11Pin);
+    float temperature = bmp.readTemperature();
 
-  if (mq11Value == HIGH || temperature > TEMPERATURE_THRESHOLD) {
-    currentStatus = Caution;
-    if (mq11Value == HIGH && temperature > TEMPERATURE_THRESHOLD) {
-      currentStatus = Fire;
-    }
-  } else {
-    currentStatus = Normal;
-  }
+    Status previousStatus = currentStatus;
 
-  // Send a signal to the fire panel and log the change if the status has changed
-  if (currentStatus != previousStatus) {
-    if (currentStatus == Fire) {
-      digitalWrite(firePanelPin, HIGH);
-      logToSDCard("Fire detected");
+    if (mq11Value == HIGH || temperature > TEMPERATURE_THRESHOLD) {
+      currentStatus = Caution;
+      if (mq11Value == HIGH && temperature > TEMPERATURE_THRESHOLD) {
+        currentStatus = Fire;
+      }
     } else {
-      digitalWrite(firePanelPin, LOW);
+      currentStatus = Normal;
     }
-    logToSDCard("Status changed to: " + String(currentStatus));
+
+    // Send a signal to the fire panel and log the change if the status has changed
+    if (currentStatus != previousStatus) {
+      if (currentStatus == Fire) {
+        digitalWrite(firePanelPin, HIGH);
+        logToSDCard("Fire detected");
+      } else {
+        digitalWrite(firePanelPin, LOW);
+      }
+      logToSDCard("Status changed to: " + String(currentStatus));
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
 
-// Function to handle notifications
-// Add the missing sendNotification() function
-void sendNotification() {
-  String notificationMessage;
-  switch (currentStatus) {
-    case Normal:
-      notificationMessage = "Status: Normal";
-      break;
-    case Maintenance:
-      notificationMessage = "Status: Maintenance";
-      break;
-    case Caution:
-      notificationMessage = "Status: Caution";
-      break;
-    case Fire:
-      notificationMessage = "Status: Fire";
-      break;
+// Handle LEDs and buzzer task
+void handleLEDsAndBuzzerTask(void* parameter) {
+  while (1) {
+    if (currentStatus == Caution || currentStatus == Fire) {
+      digitalWrite(ledPin, HIGH);
+    } else {
+      digitalWrite(ledPin, LOW);
+    }
+
+    if (currentStatus == Fire) {
+      digitalWrite(buzzerPin, HIGH);
+    } else {
+      digitalWrite(buzzerPin, LOW);
+    }
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
-  Serial.println(notificationMessage);
 }
+
+// Send notification task
+void sendNotificationTask(void* parameter) {
+  while (1) {
+    if (shouldSendNotification()) {
+      sendNotification();
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+// Function to determine status
 
 
 // Function to handle notifications based on status and time intervals
@@ -114,6 +127,27 @@ bool shouldSendNotification() {
 
   return false;
 }
+
+// Add the missing sendNotification() function
+void sendNotification() {
+  String notificationMessage;
+  switch (currentStatus) {
+    case Normal:
+      notificationMessage = "Status: Normal";
+      break;
+    case Maintenance:
+      notificationMessage = "Status: Maintenance";
+      break;
+    case Caution:
+      notificationMessage = "Status: Caution";
+      break;
+    case Fire:
+      notificationMessage = "Status: Fire";
+      break;
+  }
+  Serial.println(notificationMessage);
+}
+
 
 void logToSDCard(const String& message) {
   File logFile = SD.open("/log.txt", FILE_APPEND);
@@ -166,6 +200,7 @@ void setup() {
   pinMode(firePanelPin, OUTPUT);
   digitalWrite(firePanelPin, LOW);
 
+
   // Initialize the BMP-280 sensor
   if (!bmp.begin()) {
     Serial.println("Could not find a valid BMP-280 sensor, check wiring!");
@@ -187,24 +222,14 @@ void setup() {
 
   // Start the server
   server.begin();
+
+  // Create FreeRTOS tasks
+  xTaskCreate(updateStatusTask, "Update Status Task", 2048, NULL, 1, NULL);
+  xTaskCreate(handleLEDsAndBuzzerTask, "Handle LEDs and Buzzer Task", 1024, NULL, 1, NULL);
+  xTaskCreate(sendNotificationTask, "Send Notification Task", 2048, NULL, 1, NULL);
 }
 
+
 void loop() {
-  updateStatus();
-
-  if (currentStatus == Caution || currentStatus == Fire) {
-    digitalWrite(ledPin, HIGH);
-  } else {
-    digitalWrite(ledPin, LOW);
-  }
-
-  if (currentStatus == Fire) {
-    digitalWrite(buzzerPin, HIGH);
-  } else {
-    digitalWrite(buzzerPin, LOW);
-  }
-
-  if (shouldSendNotification()) {
-    sendNotification();
-  }
+  // The loop function remains empty since all tasks are now running on FreeRTOS tasks
 }
