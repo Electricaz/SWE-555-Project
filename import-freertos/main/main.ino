@@ -8,7 +8,9 @@
 #include "MQ2Sensor.h"
 #include "AlertController.h"
 #include <FS.h>
+#include <time.h>
 #include "SD_MMC.h" // Changed this line
+bool timeAvailable;
 const char* jquery_min_js = "/jquery.min.js";
 // Replace with your network credentials
 const char *ssid = "Maryas";
@@ -82,7 +84,7 @@ void updateStatusTask(void *parameter) {
     // Call setAlert with true to trigger the flashing when alertMode is set to Flashing.
     alertController.setAlert(true);
 
-    logToSDCard("Temperature: " + String(temperature) + " °C - Smoke: " + (mq2Value ? "Yes" : "No"));
+    logToSDCard("Temperature: " + String(temperature) + " °C - Smoke: " + (mq2Value ? "Yes" : "No"), timeAvailable);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
@@ -196,7 +198,7 @@ void setup() {
     Serial.println("Connecting to WiFi...");
   }
   Serial.println("Connected to WiFi");
-
+  timeAvailable = configureTime();
   // Print the IP address
   IPAddress local_IP = WiFi.localIP();
   Serial.print("IP Address: ");
@@ -267,16 +269,41 @@ void setup() {
   xTaskCreate(updateStatusTask, "Update Status Task", 4096, NULL, 1, NULL);
 }
 
+bool configureTime() {
+  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.println("\nWaiting for time");
+  unsigned long startTime = millis();
+  while (!time(nullptr)) {
+    Serial.print(".");
+    delay(1000);
+    if (millis() - startTime > 10000) { // Timeout after 10 seconds
+      Serial.println("\nTime configuration failed");
+      return false;
+    }
+  }
+  Serial.println("\nTime configured");
+  return true;
+}
+
 // Function to log messages to the SD card
-void logToSDCard(const String &message) {
-  File logFile = SD_MMC.open("/log.txt", FILE_APPEND); // Changed this line
+void logToSDCard(const String &message, bool timeAvailable) {
+  File logFile = SD_MMC.open("/log.txt", FILE_APPEND);
   if (logFile) {
-    logFile.println(message);
+    if (timeAvailable) {
+      time_t now = time(nullptr);
+      String timestamp = ctime(&now);
+      timestamp.trim(); // Remove trailing newline character
+      logFile.print(timestamp + " - " + message);
+    } else {
+      logFile.print("TIME_NOT_AVAILABLE - " + message);
+    }
     logFile.close();
   } else {
     Serial.println("Error opening log file.");
   }
 }
+
+
 
 // The loop function remains empty since all tasks are now running on FreeRTOS tasks.
 void loop() {
