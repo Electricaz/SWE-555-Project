@@ -1,9 +1,3 @@
-/*
- * Class Project
- * 6th May - 2023
- * Ahmed Afghani, Fahad Al-Hamzi,Khalid Afifi
-*/
-
 // Libraries for the sensors, Wi-Fi, server, and tasks
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
@@ -19,7 +13,7 @@ const char* jquery_min_js = "/jquery.min.js";
 // Replace with your network credentials
 const char *ssid = "Maryas";
 const char *password = "11111111";
-
+const char* echarts_min_js = "/echarts.min.js";
 // Pins for the BMP280, MQ-2, LED, buzzer, and fire panel
 Adafruit_BMP280 bmp280;
 const int mq2Pin = 34;
@@ -34,7 +28,7 @@ int sckPin = 18;
 int csPin = 5;
 
 // Temperature threshold in degrees Celsius
-const float TEMPERATURE_THRESHOLD = 65.0;
+const float TEMPERATURE_THRESHOLD = 26.0;
 
 // Notification intervals in milliseconds
 const unsigned long FIRE_INTERVAL = 5 * 1000;
@@ -62,33 +56,33 @@ Status currentStatus = Normal;
 // This task runs in the background and periodically checks the status of the MQ-2 sensor and BMP280 sensor.
 // It updates the current status of the system based on the sensor readings and logs any status changes to the SD card.
 void updateStatusTask(void *parameter) {
-  while (1) {
-    bool mq2Value = mq2.read();
+  for (;;) {
     float temperature = bmp280.readTemperature();
-    Status previousStatus = currentStatus;
+    bool mq2Value = mq2.read();
+    bool highTemperature = temperature > TEMPERATURE_THRESHOLD;
 
-    if (mq2Value || temperature > TEMPERATURE_THRESHOLD) {
-      currentStatus = Caution;
-      if (mq2Value && temperature > TEMPERATURE_THRESHOLD) {
+    if (highTemperature) {
+      if (mq2Value) {
         currentStatus = Fire;
+        alertController.setAlertMode(Flashing);
+      } else {
+        currentStatus = Caution;
+        alertController.setAlertMode(Flashing);
       }
     } else {
-      currentStatus = Normal;
-    }
-
-    // Send a signal to the fire panel and log the change if the status has changed
-    if (currentStatus != previousStatus) {
-      if (currentStatus == Fire) {
-        digitalWrite(firePanelPin, HIGH);
-        logToSDCard("Fire detected");
+      if (mq2Value) {
+        currentStatus = Maintenance;
+        alertController.setAlertMode(Steady);
       } else {
-        digitalWrite(firePanelPin, LOW);
+        currentStatus = Normal;
+        alertController.setAlertMode(Off);
       }
-      logToSDCard("Status changed to: " + String(currentStatus));
     }
 
-    alertController.setAlert(currentStatus == Caution || currentStatus == Fire);
+    // Call setAlert with true to trigger the flashing when alertMode is set to Flashing.
+    alertController.setAlert(true);
 
+    logToSDCard("Temperature: " + String(temperature) + " °C - Smoke: " + (mq2Value ? "Yes" : "No"));
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
@@ -118,28 +112,74 @@ bool shouldSendNotification() {
 // Function to generate the HTML content for the main page
 String generateHtmlContent() {
   String html;
-  html.reserve(300);
+  html.reserve(1500);
   html = "<!DOCTYPE html>"
          "<html>"
          "<head>"
          "<style>"
-         "body { font-family: Arial, sans-serif; }"
+         "body { font-family: Arial, sans-serif; text-align: center; }"
          "h1 { color: #4CAF50; }"
+         "h2 { color: #333; }"
+         ".gauge { width: 100%; height: 300px; display: inline-block; }"
+         ".smoke-indicator { display: inline-block; width: 50px; height: 50px; border-radius: 50%; background-color: #ccc; }"
+         ".smoke-detected { background-color: #f00 !important; }"
          "</style>"
          "<script src=\"/jquery.min.js\"></script>"
+         "<script src=\"/echarts.min.js\"></script>"
          "<script>"
-         "$(document).ready(function(){"
+         "var temperatureGauge, fireStatusImage, ledStatusImage, statusText, smokeIndicator;"
          "  setInterval(function() {"
-         "    $.get(\"/status\", function(data) {"
-         "      $(\"#status\").html(data);"
+         "    $.getJSON(\"/status\", function(data) {"
+         "      updateGauges(data.temperature);"
+         "      updateSmokeIndicator(data.smokeDetected);"
+         "      updateImages(data.smokeDetected, data.highTemperature);"
+         "      updateStatus(data.status);"
          "    });"
          "  }, 1000);"
+
+         "function createGauges() {"
+         "  temperatureGauge = echarts.init(document.getElementById('temperature-gauge'));"
+         "  temperatureGauge.setOption({"
+         "    series: [{"
+         "      type: 'gauge',"
+         "      detail: {formatter: '{value} °C', fontSize: 24, offsetCenter: [0, '60%']},"
+         "      data: [{value: 0}],"
+         "      axisLine: {lineStyle: {width: 20}}"
+         "    }]"
+         "  });"
+         "}"
+         "function updateGauges(temperature) {"
+         "  temperatureGauge.setOption({"
+         "    series: [{"
+         "      data: [{value: temperature}]"
+         "    }]"
+         "  });"
+         "}"
+         "function updateSmokeIndicator(smokeDetected) {"
+         "  smokeIndicator.classList.toggle('smoke-detected', smokeDetected);"
+         "}"
+         "function updateImages(smokeDetected, highTemperature) {"
+         "  fireStatusImage.style.display = highTemperature ? 'block' : 'none';"
+         "}"
+         "function updateStatus(status) {"
+         "  statusText.innerHTML = 'System Status: ' + status;"
+         "}"
+         "$(document).ready(function(){"
+         "  createGauges();"
+         "  fireStatusImage = document.getElementById('fire-status-image');"
+         "  smokeIndicator = document.getElementById('smoke-indicator');"
+         "  statusText = document.getElementById('status-text');"
          "});"
          "</script>"
          "</head>"
          "<body>"
          "<h1>Fire Detection System</h1>"
-         "<div id=\"status\"></div>"
+         "<div class=\"gauge\" id=\"temperature-gauge\"></div>"
+         "<h2>Temperature Sensor</h2>"
+         "<div id=\"smoke-indicator\" class=\"smoke-indicator\"></div>"
+         "<h2>Smoke Detector</h2>"
+         "<img id=\"fire-status-image\" src=\"/high-temp.jpg\" width=\"300\" height=\"200\" style=\"display:none;\">"
+         "<p id=\"status-text\">System Status: </p>"
          "</body>"
          "</html>";
   return html;
@@ -183,37 +223,43 @@ void setup() {
   pinMode(ledPin, OUTPUT);
   pinMode(buzzerPin, OUTPUT);
   pinMode(buzzerPin, HIGH);
-
+  server.on("/high-temp.jpg", HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send(SD_MMC, "/high-temp.jpg", "image/jpeg");
+  });
 
   // Serve the sensor values and current status
   server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
     String html = generateHtmlContent();
     request->send(200, "text/html", html);
   });
-
+  server.on(echarts_min_js, HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send(SD_MMC, echarts_min_js, "application/javascript");
+  });
   server.on(jquery_min_js, HTTP_GET, [](AsyncWebServerRequest * request) {
     request->send(SD_MMC, jquery_min_js, "application/javascript");
   });
-
+  server.on(jquery_min_js, HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->send(SD_MMC, jquery_min_js, "application/javascript");
+  });
   // Replace the existing /status route with the new code here
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest * request) {
-    String statusText;
-    statusText.reserve(200);
-    statusText = "MQ-2 Smoke Detector Status: " + String(mq2.read()) + "<br>";
-    statusText += "Temperature: " + String(bmp280.readTemperature()) + " &#8451;<br>";
-    statusText += "Pressure: " + String(bmp280.readPressure() / 100) + " hPa<br>";
-    statusText += "LED Status: " + String(digitalRead(ledPin)) + "<br>";
-    statusText += "Buzzer Status: " + String(!digitalRead(buzzerPin)) + "<br>";
-    statusText += "Fire Panel Status: " + String(digitalRead(firePanelPin)) + "<br>";
-    statusText += "System Status: ";
+    bool mq2Value = mq2.read();
+    float temperature = bmp280.readTemperature();
+    bool highTemperature = temperature > TEMPERATURE_THRESHOLD;
+    String status;
     switch (currentStatus) {
-      case Normal: statusText += "Normal"; break;
-      case Maintenance: statusText += "Maintenance"; break;
-      case Caution: statusText += "Caution"; break;
-      case Fire: statusText += "Fire"; break;
+      case Normal: status = "Normal"; break;
+      case Maintenance: status = "Maintenance"; break;
+      case Caution: status = "Caution"; break;
+      case Fire: status = "Fire"; break;
     }
-    request->send(200, "text/html", statusText);
+    String jsonResponse = String("{\"smokeDetected\":") + (mq2Value ? "true" : "false") +
+                          ",\"highTemperature\":" + (highTemperature ? "true" : "false") +
+                          ",\"temperature\":" + String(temperature) +
+                          ",\"status\":\"" + status + "\"}";
+    request->send(200, "application/json", jsonResponse);
   });
+
 
   // Start the server
   server.begin();
