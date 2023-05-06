@@ -1,0 +1,1 @@
+#ifndef ALERT_CONTROLLER_H#define ALERT_CONTROLLER_Hclass AlertController {public:  AlertController(int ledPin, int buzzerPin);  void setAlert(bool on);private:  int ledPin;  int buzzerPin;};#endif // ALERT_CONTROLLER_H

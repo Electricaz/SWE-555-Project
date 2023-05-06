@@ -1,0 +1,1 @@
+#include "AlertController.h"#include <Arduino.h>AlertController::AlertController(int ledPin, int buzzerPin)    : ledPin(ledPin), buzzerPin(buzzerPin) {  pinMode(ledPin, OUTPUT);  pinMode(buzzerPin, OUTPUT);}void AlertController::setAlert(bool on) {  digitalWrite(ledPin, on ? HIGH : LOW);  digitalWrite(buzzerPin, on ? HIGH : LOW);}
