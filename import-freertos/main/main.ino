@@ -85,7 +85,7 @@ void updateStatusTask(void *parameter) {
     alertController.setAlert(true);
 
     logToSDCard("Temperature: " + String(temperature) + " °C - Smoke: " + (mq2Value ? "Yes" : "No"), timeAvailable);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -293,7 +293,7 @@ void logToSDCard(const String &message, bool timeAvailable) {
       time_t now = time(nullptr);
       String timestamp = ctime(&now);
       timestamp.trim(); // Remove trailing newline character
-      logFile.print(timestamp + " - " + message);
+      logFile.println(timestamp + " - " + message);
     } else {
       logFile.print("TIME_NOT_AVAILABLE - " + message);
     }
